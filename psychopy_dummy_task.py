@@ -1,4 +1,4 @@
-"""PsychoPy demo that controls VideoSyncLSL and streams key presses over LSL."""
+"""PsychoPy demo that controls CAPcorder and streams key presses over LSL."""
 
 from __future__ import annotations
 
@@ -8,22 +8,22 @@ from pylsl import StreamInfo, StreamOutlet, local_clock
 
 def build_control_outlet() -> StreamOutlet:
     info = StreamInfo(
-        name="VideoSyncLSLControl",
+        name="CAPcorderControl_Py",
         type="videocontrol",
         channel_count=1,
         channel_format="string",
-        source_id="psychopy-videosynclsl-control-demo",
+        source_id="psychopy-CAPcorder-control-demo",
     )
     return StreamOutlet(info)
 
 
 def build_key_outlet() -> StreamOutlet:
     info = StreamInfo(
-        name="VideoSyncLSLKeys",
+        name="CAPcorderKeys",
         type="markers",
         channel_count=1,
         channel_format="string",
-        source_id="psychopy-videosynclsl-key-demo",
+        source_id="psychopy-CAPcorder-key-demo",
     )
     return StreamOutlet(info)
 
@@ -78,7 +78,7 @@ def main() -> None:
     instructions = visual.TextStim(
         win,
         text=(
-            "VideoSyncLSL PsychoPy Demo\n\n"
+            "CAPcorder PsychoPy Demo\n\n"
             "Press SPACE to send a START command.\n"
             "Press S to send a STOP command.\n"
             "Press C for a 5-second clap sync countdown.\n"

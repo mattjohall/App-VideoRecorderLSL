@@ -1,0 +1,13 @@
+{
+  "video_file": "C\\Users\\CNEL_Vega\\Documents\\CurrentStudy\\matlab_demo_20260421_105253.avi",
+  "camera_index": 1,
+  "capture_width": 320,
+  "capture_height": 240,
+  "capture_fps": 30.00003000003,
+  "audio_enabled": true,
+  "recording_started_unix": 1776783173.656834,
+  "recording_stopped_unix": 1776783178.4788728,
+  "trigger_timestamp": 358216.447363,
+  "pc_time_offset_seconds": 1776424957.209471,
+  "starting_frame_number": 1
+}

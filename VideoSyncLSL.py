@@ -1,4 +1,66 @@
-"""VideoSyncLSL webcam recorder with manual and LSL-triggered control."""
+"""
+CAPcorder: LSL-Controlled Webcam Recorder
+
+Overview
+--------
+CAPcorder is a webcam + audio recorder that is controlled via Lab Streaming Layer (LSL).
+It listens for control commands on one or more LSL streams and records synchronized
+video (and optional audio) while publishing frame counters and status updates.
+
+Key Design
+----------
+- Multiple external apps (MATLAB, PsychoPy, etc.) can send commands simultaneously
+- Each app creates its own LSL outlet (e.g., CAPcorderControl_MATLAB)
+- CAPcorder listens to ALL streams with type="videocontrol" and name starting with "CAPcorderControl"
+- Commands are merged locally (last command wins)
+
+Supported Commands (LSL string format)
+-------------------------------------
+Format: "key: value; key: value; ..."
+
+Common fields:
+    action: start | stop
+    filename: <string>
+    output_dir: <path>
+    timestamp: <float> (LSL or task time)
+    width: <int>
+    height: <int>
+    fps: <float>
+    frame_number: <int>
+    audio: true | false
+    preview: true | false
+    debug: true | false
+    camera: <int>
+
+Example:
+    "action: start; filename: test; width: 640; height: 480; fps: 30"
+
+LSL Streams Used
+----------------
+Inputs:
+    type="videocontrol"  (from MATLAB / PsychoPy / etc.)
+
+Outputs:
+    CAPcorderFrames  → frame index (int)
+    CAPcorderStatus  → recording state + metadata (string)
+
+Typical Workflow
+----------------
+1. Launch CAPcorder (this app)
+2. Start LabRecorder (optional, to log streams)
+3. Launch experiment (MATLAB / PsychoPy)
+4. Send "action: start" over LSL
+5. Run task
+6. Send "action: stop"
+
+Notes
+-----
+- Multiple control streams are supported (no shared stream required)
+- Uses non-blocking multi-inlet listener for robustness
+- Designed for multi-machine LSL setups
+- Windows paths should use forward slashes or be quoted if containing colons
+
+"""
 
 from __future__ import annotations
 
@@ -16,6 +78,8 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+import sys
+import os
 
 import cv2
 import numpy as np
@@ -47,7 +111,13 @@ DEFAULT_RESOLUTION_PRESETS = {
     "720p": (1280, 720),
     "1080p": (1920, 1080),
 }
+def resource_path(relative_path):
+    try:
+        base_path = sys._MEIPASS  # PyInstaller temp folder
+    except AttributeError:
+        base_path = os.path.abspath(".")  # normal Python run
 
+    return os.path.join(base_path, relative_path)
 
 @dataclass
 class RecorderSettings:
@@ -58,10 +128,10 @@ class RecorderSettings:
     filename: str = "recording"
     output_dir: Path = field(default_factory=lambda: Path(__file__).resolve().parent / "recordings")
     initial_frame_number: int = 1
-    control_stream_name: str = "VideoSyncLSLControl"
-    frame_stream_name: str = "VideoSyncLSLFrames"
-    status_stream_name: str = "VideoSyncLSLStatus"
-    preview_window_name: str = "VideoSyncLSL Preview"
+    control_stream_name: str = "CAPcorderControl"
+    frame_stream_name: str = "CAPcorderFrames"
+    status_stream_name: str = "CAPcorderStatus"
+    preview_window_name: str = "CAPcorder Preview"
     codec: str = "XVID"
     audio_enabled: bool = True
     preview_enabled: bool = True
@@ -71,7 +141,7 @@ class RecorderSettings:
 
 
 def parse_args() -> RecorderSettings:
-    parser = argparse.ArgumentParser(description="VideoSyncLSL webcam recorder")
+    parser = argparse.ArgumentParser(description="CAPcorder webcam recorder")
     parser.add_argument("--camera", type=int, default=None, help="Camera index. Defaults to the first external camera.")
     parser.add_argument("--resolution", choices=sorted(DEFAULT_RESOLUTION_PRESETS), default="480p", help="Resolution preset.")
     parser.add_argument("--width", type=int, default=None, help="Capture width in pixels.")
@@ -80,9 +150,9 @@ def parse_args() -> RecorderSettings:
     parser.add_argument("--filename", default="recording", help="Base filename for saved videos.")
     parser.add_argument("--output-dir", default=None, help="Folder for saved videos.")
     parser.add_argument("--frame-number", type=int, default=1, help="Initial frame number pushed to LSL.")
-    parser.add_argument("--control-stream", default="VideoSyncLSLControl", help="LSL inlet stream name for remote control.")
-    parser.add_argument("--frame-stream", default="VideoSyncLSLFrames", help="LSL outlet stream name for frame numbers.")
-    parser.add_argument("--status-stream", default="VideoSyncLSLStatus", help="LSL outlet stream name for recording status.")
+    parser.add_argument("--control-stream", default="CAPcorderControl", help="LSL inlet stream name for remote control.")
+    parser.add_argument("--frame-stream", default="CAPcorderFrames", help="LSL outlet stream name for frame numbers.")
+    parser.add_argument("--status-stream", default="CAPcorderStatus", help="LSL outlet stream name for recording status.")
     parser.add_argument("--audio", dest="audio", action="store_true", default=True, help="Enable microphone recording when supported.")
     parser.add_argument("--no-audio", dest="audio", action="store_false", help="Disable microphone recording.")
     parser.add_argument("--no-ui", action="store_true", help="Disable the Tk control window and use preview only.")
@@ -96,6 +166,8 @@ def parse_args() -> RecorderSettings:
         height = args.height
 
     output_dir = Path(args.output_dir).expanduser() if args.output_dir else Path(__file__).resolve().parent / "recordings"
+    print(output_dir)
+
     return RecorderSettings(
         camera_index=args.camera,
         width=width,
@@ -118,6 +190,17 @@ def parse_args() -> RecorderSettings:
 def now_timestamp() -> str:
     return datetime.now().strftime("%Y%m%d_%H%M%S")
 
+''' # doesnt work to push to inlets, must be unique
+def create_control_outlet(stream_name: str) -> StreamOutlet:
+    info = StreamInfo(
+        name=stream_name,
+        type="videocontrol",
+        channel_count=1,
+        channel_format="string",
+        source_id="capcorder-control-master",
+    )
+    return StreamOutlet(info)
+'''
 
 def create_frame_outlet(stream_name: str) -> StreamOutlet:
     info = StreamInfo(
@@ -257,8 +340,49 @@ class AudioRecorder:
             if self.wave_file is not None:
                 self.wave_file.close()
                 self.wave_file = None
+'''
+class LSLControlServer(threading.Thread):
+    def __init__(self, stream_name: str, port: int = 5005):
+        super().__init__(daemon=True)
+        self.stream_name = stream_name
+        self.port = port
+        self._stop_event = threading.Event()
+        self.sock = None
+        self.outlet = None
 
+    def stop(self):
+        self._stop_event.set()
+        if self.sock:
+            try:
+                self.sock.close()
+            except:
+                pass
 
+    def run(self):
+        info = StreamInfo(
+            name=self.stream_name,
+            type="control",
+            channel_count=1,
+            channel_format="string",
+            source_id="capcorder-control-server"
+        )
+        self.outlet = StreamOutlet(info)
+
+        import socket
+        self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.sock.bind(("127.0.0.1", self.port))
+        self.sock.settimeout(0.5)
+
+        while not self._stop_event.is_set():
+            try:
+                data, _ = self.sock.recvfrom(1024)
+                msg = data.decode("utf-8")
+                self.outlet.push_sample([msg])
+            except socket.timeout:
+                continue
+            except Exception:
+                break
+'''
 class LSLControlListener(threading.Thread):
     def __init__(self, stream_name: str, command_queue: queue.Queue[dict[str, Any]]) -> None:
         super().__init__(daemon=True)
@@ -270,21 +394,30 @@ class LSLControlListener(threading.Thread):
         self._stop_event.set()
 
     def run(self) -> None:
+        inlets = {}
+
         while not self._stop_event.is_set():
-            streams = resolve_byprop("name", self.stream_name, timeout=0.5)
-            if not streams:
-                continue
-            inlet = StreamInlet(streams[0], recover=True)
-            try:
-                while not self._stop_event.is_set():
-                    sample, lsl_time = inlet.pull_sample(timeout=0.25)
-                    if not sample:
-                        continue
-                    payload = parse_control_message(str(sample[0]))
-                    payload["lsl_time"] = lsl_time
-                    self.command_queue.put(payload)
-            except Exception:
-                time.sleep(0.25)
+            streams = resolve_byprop("type", "videocontrol", timeout=0.2)
+
+            # add new streams
+            for s in streams:
+                name = s.name()
+                if not name.startswith("CAPcorderControl"):
+                    continue
+
+                if s.uid() not in inlets:
+                    inlets[s.uid()] = StreamInlet(s, recover=False)
+
+            # poll all inlets
+            for uid, inlet in list(inlets.items()):
+                try:
+                    sample, lsl_time = inlet.pull_sample(timeout=0.05)
+                    if sample:
+                        payload = parse_control_message(str(sample[0]))
+                        payload["lsl_time"] = lsl_time
+                        self.command_queue.put(payload)
+                except:
+                    del inlets[uid]  # clean dead stream
 
 
 class VideoSyncRecorder:
@@ -296,9 +429,11 @@ class VideoSyncRecorder:
         self.actual_width = int(self.capture.get(cv2.CAP_PROP_FRAME_WIDTH) or settings.width)
         self.actual_height = int(self.capture.get(cv2.CAP_PROP_FRAME_HEIGHT) or settings.height)
         self.actual_fps = float(self.capture.get(cv2.CAP_PROP_FPS) or settings.fps)
+        #self.control_outlet = create_control_outlet(self.settings.control_stream_name)
         self.frame_outlet = create_frame_outlet(settings.frame_stream_name)
         self.status_outlet = create_status_outlet(settings.status_stream_name)
         self.command_queue: queue.Queue[dict[str, Any]] = queue.Queue()
+        #self.control_server = LSLControlServer(self.settings.control_stream_name)
         self.listener = LSLControlListener(settings.control_stream_name, self.command_queue)
         self.recording = False
         self.writer: cv2.VideoWriter | None = None
@@ -312,7 +447,7 @@ class VideoSyncRecorder:
         self.recording_started_unix: float | None = None
         self.trigger_timestamp: float | None = settings.trigger_timestamp
         self.last_status_text = "Idle"
-        self.crash_state_path = Path(__file__).resolve().parent / ".videosynclsl_active_recording.json"
+        self.crash_state_path = Path(__file__).resolve().parent / ".CAPcorder_active_recording.json"
         self.stop_requested = False
         self.root: tk.Tk | None = None
         self.preview_label = None
@@ -336,10 +471,13 @@ class VideoSyncRecorder:
         if not self.settings.use_ui or tk is None or ImageTk is None:
             return
         self.root = tk.Tk()
-        self.root.title("VideoSyncLSL")
+        # --- set icon here ---
+        self.root.iconbitmap(resource_path("capcordericon.ico"))  # Windows-friendly
+
+        self.root.title("CAPcorder")
         self.root.protocol("WM_DELETE_WINDOW", self.request_stop)
         self.root.bind("<Configure>", self.on_window_configure)
-        self.root.geometry(f"{max(self.actual_width, 360)}x{max(self.actual_height + 170, 320)}")
+        self.root.geometry(f"{max(self.actual_width, 300)}x{max(self.actual_height + 120, 250)}")
 
         menu = tk.Menu(self.root)
         file_menu = tk.Menu(menu, tearoff=False)
@@ -447,7 +585,10 @@ class VideoSyncRecorder:
         self.update_button_states()
         self.update_debug_visibility()
         self.on_window_configure(None)
-
+    ''' #depreciated master outlet doesnt allow inlet pushing
+    def send_control_command(self, msg: str) -> None:
+        self.control_outlet.push_sample([msg], local_clock())
+    '''
     def toggle_settings_panel(self) -> None:
         if self.settings_frame is None:
             return
@@ -512,7 +653,7 @@ class VideoSyncRecorder:
         if self.status_label is not None:
             self.status_label.config(text=warning)
         if messagebox:
-            messagebox.showwarning("VideoSyncLSL", warning)
+            messagebox.showwarning("CAPcorder", warning)
 
     def update_settings_from_ui(self) -> None:
         if not self.ui_vars:
@@ -830,44 +971,81 @@ class VideoSyncRecorder:
         if self.settings.preview_enabled:
             return self.overlay_status(base_frame)
         return self.overlay_status(self.build_placeholder_frame() if use_tk_preview else np.zeros_like(base_frame))
-
+    
     def apply_remote_command(self, payload: dict[str, Any]) -> None:
         action = str(payload.get("action", "")).lower().strip()
+
+        def normalize_path(p: str) -> Path:
+            p = str(p).strip()
+            # handle "C/Users/..." → "C:/Users/..."
+            if len(p) >= 2 and (p[1] == "/" or p[1] == "\\") and p[0].isalpha():
+                p = f"{p[0]}:{p[1:]}"
+            print(Path(p).expanduser())
+            return Path(p).expanduser()
+
+        # --- string / path ---
         if "filename" in payload:
             self.settings.filename = str(payload["filename"])
             if "filename" in self.ui_vars:
                 self.ui_vars["filename"].set(self.settings.filename)
+
+        if "output_dir" in payload:
+            self.settings.output_dir = normalize_path(payload["output_dir"])
+            if "output_dir" in self.ui_vars:
+                self.ui_vars["output_dir"].set(str(self.settings.output_dir))
+
         if "timestamp" in payload:
             self.trigger_timestamp = float(payload["timestamp"])
             if "timestamp" in self.ui_vars:
                 self.ui_vars["timestamp"].set(str(self.trigger_timestamp))
+
+        # --- numeric ---
         if "width" in payload:
             self.settings.width = int(payload["width"])
+            if "width" in self.ui_vars:
+                self.ui_vars["width"].set(str(self.settings.width))
+
         if "height" in payload:
             self.settings.height = int(payload["height"])
+            if "height" in self.ui_vars:
+                self.ui_vars["height"].set(str(self.settings.height))
+
         if "fps" in payload:
             self.settings.fps = float(payload["fps"])
+            if "fps" in self.ui_vars:
+                self.ui_vars["fps"].set(str(self.settings.fps))
+
+        if "frame_number" in payload:
+            self.frame_number = int(payload["frame_number"])
+            if "frame_number" in self.ui_vars:
+                self.ui_vars["frame_number"].set(str(self.frame_number))
+
+        # --- toggles ---
         if "audio" in payload:
             self.settings.audio_enabled = bool(payload["audio"])
             if "audio_enabled" in self.ui_vars:
                 self.ui_vars["audio_enabled"].set(self.settings.audio_enabled)
+
         if "preview" in payload:
             self.settings.preview_enabled = bool(payload["preview"])
             if "preview_enabled" in self.ui_vars:
                 self.ui_vars["preview_enabled"].set(self.settings.preview_enabled)
+
         if "debug" in payload:
             self.settings.show_debug_text = bool(payload["debug"])
             if "show_debug_text" in self.ui_vars:
                 self.ui_vars["show_debug_text"].set(self.settings.show_debug_text)
             self.update_debug_visibility()
-        if "frame_number" in payload:
-            self.frame_number = int(payload["frame_number"])
-            if "frame_number" in self.ui_vars:
-                self.ui_vars["frame_number"].set(str(self.frame_number))
+
+        # --- camera ---
         if "camera" in payload:
             self.switch_camera(int(payload["camera"]))
-        elif any(key in payload for key in ("width", "height", "fps")) and not self.recording:
+
+        # --- reconfigure if needed ---
+        elif any(k in payload for k in ("width", "height", "fps")) and not self.recording:
             self.reconfigure_capture()
+
+        # --- actions ---
         if action == "start":
             self.start_recording()
         elif action == "stop":
@@ -916,6 +1094,7 @@ class VideoSyncRecorder:
                     elif key == ord("s"):
                         self.stop_recording()
         finally:
+            #self.control_server.stop()
             self.listener.stop()
             self.stop_recording()
             self.capture.release()
