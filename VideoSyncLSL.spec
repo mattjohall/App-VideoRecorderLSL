@@ -5,7 +5,7 @@ a = Analysis(
     ['VideoSyncLSL.py'],
     pathex=[],
     binaries=[],
-    datas=[('capcordericon.ico', '.')],
+    datas=[('capcorder.ico', '.')],
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},
@@ -35,5 +35,5 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon=['capcordericon.ico'],
+    icon=['capcorder.ico'],
 )
