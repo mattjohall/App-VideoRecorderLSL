@@ -1,4 +1,4 @@
-('C:\\Users\\CNEL_Vega\\Documents\\GitHub\\VideoSyncLSL\\build\\VideoSyncLSL\\PYZ-00.pyz',
+('C:\\Users\\CNEL_Vega\\Documents\\GitHub\\App-VideoRecorderLSL\\build\\VideoSyncLSL\\PYZ-00.pyz',
  [('PIL',
    'C:\\Users\\CNEL_Vega\\.conda\\envs\\lsl\\lib\\site-packages\\PIL\\__init__.py',
    'PYMODULE'),
