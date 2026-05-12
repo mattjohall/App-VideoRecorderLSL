@@ -70,3 +70,10 @@ CAPcorder:
 ## 🎮 Commands
 
 Format:
+
+## Audio Test
+
+Use File -> Test Audio or the Test Audio button to record about 3 seconds from the current microphone and immediately play it back. This is meant as a quick machine check before a real recording session.
+
+LSL control paths also accept output-dir as well as output_dir, and single-letter slash paths such as C/Users/... are normalized to Windows drive paths automatically.
+

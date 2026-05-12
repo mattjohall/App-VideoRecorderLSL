@@ -165,8 +165,7 @@ def parse_args() -> RecorderSettings:
     if args.height:
         height = args.height
 
-    output_dir = Path(args.output_dir).expanduser() if args.output_dir else Path(__file__).resolve().parent / "recordings"
-    print(output_dir)
+    output_dir = normalize_output_path(args.output_dir) if args.output_dir else Path(__file__).resolve().parent / "recordings"
 
     return RecorderSettings(
         camera_index=args.camera,
@@ -285,13 +284,21 @@ def coerce_value(raw_value: str) -> Any:
         return value
 
 
+def normalize_output_path(raw_path: str | Path) -> Path:
+    path_text = str(raw_path).strip()
+    if len(path_text) >= 2 and path_text[0].isalpha() and path_text[1] in {"/", "\\"}:
+        path_text = f"{path_text[0]}:{path_text[1:]}"
+    return Path(path_text).expanduser()
+
+
 def parse_control_message(message: str) -> dict[str, Any]:
     result: dict[str, Any] = {}
     for part in message.split(";"):
         if ":" not in part:
             continue
         key, value = part.split(":", 1)
-        result[key.strip().lower()] = coerce_value(value)
+        normalized_key = key.strip().lower().replace("-", "_")
+        result[normalized_key] = coerce_value(value)
     return result
 
 
@@ -483,6 +490,7 @@ class VideoSyncRecorder:
         file_menu = tk.Menu(menu, tearoff=False)
         file_menu.add_command(label="Start Recording", command=self.start_recording_from_ui)
         file_menu.add_command(label="Stop Recording", command=self.stop_recording)
+        file_menu.add_command(label="Test Audio", command=self.run_audio_test)
         file_menu.add_separator()
         file_menu.add_command(label="Exit", command=self.request_stop)
         menu.add_cascade(label="File", menu=file_menu)
@@ -633,6 +641,34 @@ class VideoSyncRecorder:
         selected = filedialog.askdirectory(initialdir=self.ui_vars["output_dir"].get())
         if selected:
             self.ui_vars["output_dir"].set(selected)
+
+    def run_audio_test(self) -> None:
+        if sd is None:
+            self.set_save_status("Audio test unavailable: sounddevice is not installed.", (0, 0, 255))
+            return
+        if self.recording:
+            self.set_save_status("Stop recording before running the audio test.", (0, 0, 255))
+            return
+        try:
+            device_info = sd.query_devices(kind="input")
+            channels = max(1, min(int(device_info.get("max_input_channels", 1) or 1), 2))
+            sample_rate = int(device_info.get("default_samplerate", 44100) or 44100)
+            duration_sec = 3
+            self.set_save_status("Audio test: recording 3 seconds...", (0, 140, 255))
+            if self.root is not None:
+                self.root.update_idletasks()
+                self.root.update()
+            test_audio = sd.rec(int(duration_sec * sample_rate), samplerate=sample_rate, channels=channels, dtype="int16")
+            sd.wait()
+            self.set_save_status("Audio test: playing back...", (0, 140, 255))
+            if self.root is not None:
+                self.root.update_idletasks()
+                self.root.update()
+            sd.play(test_audio, sample_rate)
+            sd.wait()
+            self.set_save_status("Audio test complete: playback finished.", (0, 170, 0))
+        except Exception as exc:
+            self.set_save_status(f"Audio test failed: {exc}", (0, 0, 255))
 
     def request_stop(self) -> None:
         self.stop_requested = True
@@ -975,14 +1011,6 @@ class VideoSyncRecorder:
     def apply_remote_command(self, payload: dict[str, Any]) -> None:
         action = str(payload.get("action", "")).lower().strip()
 
-        def normalize_path(p: str) -> Path:
-            p = str(p).strip()
-            # handle "C/Users/..." → "C:/Users/..."
-            if len(p) >= 2 and (p[1] == "/" or p[1] == "\\") and p[0].isalpha():
-                p = f"{p[0]}:{p[1:]}"
-            print(Path(p).expanduser())
-            return Path(p).expanduser()
-
         # --- string / path ---
         if "filename" in payload:
             self.settings.filename = str(payload["filename"])
@@ -990,7 +1018,7 @@ class VideoSyncRecorder:
                 self.ui_vars["filename"].set(self.settings.filename)
 
         if "output_dir" in payload:
-            self.settings.output_dir = normalize_path(payload["output_dir"])
+            self.settings.output_dir = normalize_output_path(payload["output_dir"])
             if "output_dir" in self.ui_vars:
                 self.ui_vars["output_dir"].set(str(self.settings.output_dir))
 
@@ -1112,3 +1140,4 @@ def main() -> int:
 
 if __name__ == "__main__":
     raise SystemExit(main())
+
