@@ -479,7 +479,7 @@ class VideoSyncRecorder:
             return
         self.root = tk.Tk()
         # --- set icon here ---
-        self.root.iconbitmap(resource_path("capcordericon.ico"))  # Windows-friendly
+        self.root.iconbitmap(resource_path("capcorder.ico"))  # Windows-friendly
 
         self.root.title("CAPcorder")
         self.root.protocol("WM_DELETE_WINDOW", self.request_stop)
